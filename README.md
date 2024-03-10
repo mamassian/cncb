@@ -2,7 +2,7 @@
 CNCB toolbox (Confidence Noise Confidence Boost) -- v0.1
 
 1. Download all the files
-2. Run 'cncb_example_1' to check that everything works
+2. Run `cncb_example_1` to check that everything works
 
 The toolbox consists of the following main files:
 - `cncb_simul`: simulates a perceptual discrimination task followed by confidence rating judgments
