@@ -1,2 +1,2 @@
 # cncb
-Confidence Noise Confidence Boost toolbox
+CNCB toolbox (Confidence Noise Confidence Boost) -- v0.1
