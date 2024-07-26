@@ -261,17 +261,19 @@ for tt = 1:nb_trials
         data_SRC(cnd_ind, 4) = data_SRC(cnd_ind, 4) + 1;
 
         % -> fill in the format from Maniscalco&Lau
-        if (ind_intens == 1)
-            if (~resp1)
-                nR_S1_R1(conf_ind) = nR_S1_R1(conf_ind) + 1;
+        if (nb_sens_intens == 2)
+            if (ind_intens == 1)
+                if (~resp1)
+                    nR_S1_R1(conf_ind) = nR_S1_R1(conf_ind) + 1;
+                else
+                    nR_S1_R2(conf_ind) = nR_S1_R2(conf_ind) + 1;
+                end
             else
-                nR_S1_R2(conf_ind) = nR_S1_R2(conf_ind) + 1;
-            end
-        else
-            if (~resp1)
-                nR_S2_R1(conf_ind) = nR_S2_R1(conf_ind) + 1;
-            else
-                nR_S2_R2(conf_ind) = nR_S2_R2(conf_ind) + 1;
+                if (~resp1)
+                    nR_S2_R1(conf_ind) = nR_S2_R1(conf_ind) + 1;
+                else
+                    nR_S2_R2(conf_ind) = nR_S2_R2(conf_ind) + 1;
+                end
             end
         end
     
@@ -310,8 +312,10 @@ if (conf_continuous)
     raw_data = [stims_nn, percs_nn, conf_mag_nn];
 else
     raw_data = [stims_nn, percs_nn, conf_ind_nn];
-    nR_S1 = [fliplr(nR_S1_R1), nR_S1_R2];
-    nR_S2 = [fliplr(nR_S2_R1), nR_S2_R2];
+    if (nb_sens_intens == 2)
+        nR_S1 = [fliplr(nR_S1_R1), nR_S1_R2];
+        nR_S2 = [fliplr(nR_S2_R1), nR_S2_R2];
+    end
 end
 
 
@@ -321,8 +325,10 @@ cncb_data = struct;
 cncb_data.raw_data = raw_data;
 cncb_data.data_SRC = data_SRC;
 cncb_data.data_SRC_prob = data_SRC_norm;
-cncb_data.nR_S1 = nR_S1;
-cncb_data.nR_S2 = nR_S2;
+if (nb_sens_intens == 2)
+    cncb_data.nR_S1 = nR_S1;
+    cncb_data.nR_S2 = nR_S2;
+end
 
 end
 

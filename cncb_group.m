@@ -49,6 +49,7 @@
 % 16-FEB-2022 - pm: added continuous ratings
 % 25-OCT-2023 - pm: fixed continuous ratings
 % 08-MAR-2024 - pm: group continuous ratings by quantiles
+% 31-MAR-2024 - pm: add warning if only one confidence level
 
 
 function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
@@ -57,7 +58,7 @@ function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
     dflt_is_continuous        = false;  % continuous (T) or discrete (F) rating scale
     dflt_conf_cont_half_scale = false;
     dflt_conf_cont_range      = [0, 1];
-    dflt_conf_cont_nb_levels  = 10;     % used to fit continuous data
+    dflt_conf_cont_nb_levels  = 100;    % used to fit continuous data
     dflt_conf_disc_labels     = [];
 
     % -> parse all arguments
@@ -111,15 +112,29 @@ function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
                 % -> if half-scale, there might be a large accumulation of
                 %    confidence values on lower-bound, so perform quantile
                 %    on the rest of the distribution
-                conf_vals = conf_vals(conf_vals ~= conf_range(1));
+                conf_vals = conf_vals(conf_vals ~= min(conf_vals));
             end
 
             conf_bnd_edges = quantile(conf_vals, conf_cont_nb_levels - 1);
             if (conf_bnd_edges(end) > conf_range(end))
-                fprintf('Error: confidence range is not large enough');
+                fprintf('Error: confidence range is not large enough\n');
             end
             conf_bnd_edges = [conf_range(1), conf_bnd_edges, conf_range(end)];
             conf_bnd_labels = conf_bnd_edges(2:end);
+
+            % -> check that all edges are different
+            aa = (diff(conf_bnd_labels) == 0);
+            my_count = 1;
+            while ((sum(aa) ~= 0) && (my_count < 100))
+                first_ind = find(aa, 1, 'first');
+                if (first_ind ~= 1)
+                    conf_bnd_labels(first_ind) = ...
+                        (conf_bnd_labels(first_ind) + ...
+                         conf_bnd_labels(first_ind-1)) / 2;
+                end
+                aa = (diff(conf_bnd_labels) == 0);
+                my_count = my_count + 1;
+            end
         end
 
     else
@@ -131,6 +146,10 @@ function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
         end
     end
     conf_levels_nb = length(conf_bnd_labels);
+
+    if (conf_levels_nb == 1)
+        fprintf('Warning: only 1 confidence level in dataset\n');
+    end
 
     nb_conds = stim_nb * resp_nb * conf_levels_nb;
 

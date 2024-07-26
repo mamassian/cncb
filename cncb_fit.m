@@ -83,11 +83,16 @@
 % 
 %
 % 23-AUG-2021 - pascal mamassian
+
 % 16-FEB-2022 - pm: added continuous ratings
 % 03-NOV-2022 - pm: define ideal observer to match high conf frequency
 % 19-OCT-2023 - pm: updated continuous ratings fit
 % 11-FEB-2024 - pm: fit cumulative distributions instead of distributions
 % 10-MAR-2024 - pm: cleaned up
+% 27-APR-2024 - pm: fixed 'cellpadding' & cropped 'conf_cumul'
+% 16-JUN-2024 - pm: added confidence boundaries as parameters for continuous
+% 17-JUL-2024 - pm: added Deviance statistics
+% 22-JUL-2024 - pm: corrected nb trials in likelihood computation
 
 
 function cncb_fit_struct = cncb_fit(cncb_data, varargin)
@@ -139,11 +144,12 @@ verbose_flag    = ip.Results.verbose;
 
 
 options1 = optimset;
+options2 = optimset('TolFun',1e-3, 'TolX',1e-3);
 if (verbose_flag >= 2)
-    options2 = optimset('Display','iter', 'TolFun',1e-3, 'TolX',1e-3);
+    options3 = optimset('Display','iter');
     tstart = tic;   % start timer
 else
-    options2 = optimset('TolFun',1e-3, 'TolX',1e-3);
+    options3 = optimset;
 end
 
 
@@ -168,22 +174,41 @@ col_resp = 2;
 col_conf_levl = 3;
 col_conf_prob = 4;
 
-stim_lst = unique(cncb_data(:, col_stim));
+[stim_lst, ~, stim_ic] = unique(cncb_data(:, col_stim));
 stim_nb = length(stim_lst);
 
-resp_lst = unique(cncb_data(:, col_resp));
+% -> count how many confidence judgments were made for each stimulus
+%    (useful to compute likelihood)
+conf_count_stim = NaN(1, stim_nb);
+conf_count_lst = NaN(1, size(cncb_data,1));
+for ss = 1:stim_nb
+    cond_inds = (stim_ic == ss);
+    conf_count_stim(ss) = sum(cncb_data(cond_inds, col_conf_prob));
+    conf_count_lst(cond_inds) = conf_count_stim(ss);
+end
 
+resp_lst = unique(cncb_data(:, col_resp));
+resp_nb = length(resp_lst);
+
+if (size(cncb_data,1) == (stim_nb*resp_nb))
+    % -> it looks like all the data have the same confidence
+    fprintf('CNCB fit error: all the data have the same confidence\n');
+
+    cncb_fit_struct = -1;   % return error
+    return;
+end
 
 src_data_norm = src_data_count;
 data_SRC_norm = NaN(size(src_data_norm,1),1);
+data_SRC_count = NaN(size(src_data_norm,1),1);
 if (~conf_continuous)
     
     rating_inds = unique(src_data_norm(:, col_conf_levl));
     conf_levels_nb = length(rating_inds);
     rating_bnds_nb = conf_levels_nb - 1;
     
-    % -> convert counts of confidence ratings into probabilities (conditional
-    %    on stimulus)
+    % -> convert counts of confidence ratings into probabilities 
+    %    (conditional on stimulus)
     stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
     for ss = 1:stim_nb
         sens_mean = stim_lst(ss);
@@ -195,15 +220,31 @@ if (~conf_continuous)
     src_data_norm(:, col_conf_prob) = data_SRC_norm;
 
     % -> use cell padding technique advised in 'type2_SDT_MLE'
-    cellpadding = 1 / (1000*conf_levels_nb);
-    if any(src_data_norm(:,col_conf_prob) < 0.001)
-        src_data_norm(:,col_conf_prob) = src_data_norm(:,col_conf_prob) + ...
-            cellpadding * rand(size(src_data_norm, 1), 1);
+    % cellpadding = 1 / (10*conf_levels_nb);
+    cellpadding = 1 / (100000*conf_levels_nb);
+    if any(src_data_norm(:,col_conf_prob) < cellpadding)
+        inds = find(src_data_norm(:,col_conf_prob) < cellpadding);
+        src_data_norm(inds, col_conf_prob) = src_data_norm(inds, col_conf_prob) + ...
+            cellpadding;
     end
+
+    % -> fix the normalization so that cumulative prob is 1
+    stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
+    for ss = 1:stim_nb
+        sens_mean = stim_lst(ss);
+        cond_inds = (src_data_norm(:, col_stim) == sens_mean);
+        stim_prob(ss) = sum(src_data_norm(cond_inds, col_conf_prob));
+        data_SRC_norm(cond_inds) = ...
+            src_data_norm(cond_inds, col_conf_prob) ./ stim_prob(ss);
+    end
+    src_data_norm(:, col_conf_prob) = data_SRC_norm;
 
 else
     [conf_lst, ~, ~] = unique(src_data_norm(:, col_conf_levl));
     conf_bnd_labels = conf_lst';
+
+    conf_levels_nb = length(conf_bnd_labels) + 1;
+    rating_bnds_nb = conf_levels_nb - 1;
 
 end
 
@@ -212,13 +253,44 @@ for ss = 1:stim_nb
     sens_mean = stim_lst(ss);
     cond_inds = (src_data_norm(:, col_stim) == sens_mean);
     data_SRC_norm(cond_inds) = ...
-        src_data_norm(cond_inds, col_conf_prob) ./ sum(src_data_norm(cond_inds, col_conf_prob));
+        src_data_norm(cond_inds, col_conf_prob) ./ ...
+        sum(src_data_norm(cond_inds, col_conf_prob));
+    data_SRC_count(cond_inds) = data_SRC_norm(cond_inds) .* conf_count_stim(ss);
 end
 src_data_norm(:, col_conf_prob) = data_SRC_norm;
+src_data_count(:, col_conf_prob) = data_SRC_count;
+
+
+% -> compute confidence sums over (stim) and (stim, resp)
+conf_nb0 = size(src_data_count, 1);
+[cond_mat, ~, cond_ic] = unique(src_data_count(:, [1,2]), 'rows');
+cond_nb = size(cond_mat, 1);
+
+conf_sum_stim = NaN(1, stim_nb);
+conf_sum_stim_resp = NaN(1, conf_nb0);
+conf_remove_stim_resp = NaN(1, cond_nb);
+
+for cnd = 1:cond_nb
+    conf_inds5 = (cond_ic == cnd);
+    cum_tmp5 = sum(src_data_count(conf_inds5, 4));
+    conf_sum_stim_resp(conf_inds5) = cum_tmp5;
+
+    % -> collect indices to remove at the end
+    conf_remove_stim_resp(cnd) = find(conf_inds5, 1, 'last');
+end
+conf_sum_stim_resp(conf_remove_stim_resp) = [];
+
+for cnd = 1:stim_nb
+    conf_inds5 = (stim_ic == cnd);
+    cum_tmp5 = sum(src_data_count(conf_inds5, 4));
+    conf_sum_stim(cnd) = cum_tmp5;
+end
 
 
 src_data_cumul = conf_cumul(src_data_norm);
-human_cumul_tofit = [src_data_cumul(:,col_conf_prob), 1 - src_data_cumul(:,col_conf_prob)];
+human_cumul_tofit = [src_data_cumul(:,col_conf_prob), ...
+                 1 - src_data_cumul(:,col_conf_prob)];
+human_cumul_tofit = human_cumul_tofit .* conf_sum_stim_resp';
 
 
 
@@ -234,6 +306,9 @@ if (~conf_continuous)
 else
     default_llo_gamma   = 1.0;
     default_llo_p0      = 0.5;
+
+    bnds = linspace(0.5, 1.0, rating_bnds_nb+2) * conf_cont_range(2);
+    default_conf_bnds = bnds(2:(end-1));
 end
 
 % -> initial values of the parameters
@@ -249,6 +324,8 @@ if (~conf_continuous)
 else
     initial_llo_gamma   = 0.8;
     initial_llo_p0      = 0.4;
+
+    initial_conf_bnds   = linspace(0.4, 0.9, rating_bnds_nb) * conf_cont_range(2);
 end
 
 
@@ -264,6 +341,9 @@ if (~conf_continuous)
 else
     lo_bnd_llo_gamma    = 0.0;     hi_bnd_llo_gamma     = Inf;
     lo_bnd_llo_p0       = 1e-6;     hi_bnd_llo_p0       = 1-1e-6;
+
+    lo_bnd_conf_bnds = zeros(1, rating_bnds_nb);
+    hi_bnd_conf_bnds =  ones(1, rating_bnds_nb) * conf_cont_range(2);
 end
 
 
@@ -279,6 +359,7 @@ if (~conf_continuous)
 else
     initial_params.llo_gamma  = initial_llo_gamma;
     initial_params.llo_p0     = initial_llo_p0;
+    initial_params.conf_bnds = initial_conf_bnds;
 end
 
 % -> lower and upper bound values of the parameters
@@ -293,6 +374,7 @@ if (~conf_continuous)
 else
     lo_bnd_params.llo_gamma  = lo_bnd_llo_gamma;
     lo_bnd_params.llo_p0     = lo_bnd_llo_p0;
+    lo_bnd_params.conf_bnds = lo_bnd_conf_bnds;
 end
 
 hi_bnd_params = struct;
@@ -306,6 +388,7 @@ if (~conf_continuous)
 else
     hi_bnd_params.llo_gamma  = hi_bnd_llo_gamma;
     hi_bnd_params.llo_p0     = hi_bnd_llo_p0;
+    hi_bnd_params.conf_bnds = hi_bnd_conf_bnds;
 end
 
 
@@ -322,6 +405,9 @@ if (~conf_continuous)
 else
     default_params_set.llo_gamma  = 0;
     default_params_set.llo_p0     = 0;
+
+    % -> 16-JUN-2024
+    default_params_set.conf_bnds = 0;
 end
 
 % -> default values of the parameters
@@ -336,6 +422,9 @@ if (~conf_continuous)
 else
     default_params_val.llo_gamma  = default_llo_gamma;
     default_params_val.llo_p0     = default_llo_p0;
+
+    % -> 16-JUN-2024
+    default_params_val.conf_bnds = default_conf_bnds;
 end
 
 
@@ -433,7 +522,8 @@ for ss = 1:stim_nb
     resp_vec(ss) = sum(src_data_count(lcl_righ_inds, col_conf_prob)) / ...
                    sum(src_data_count(lcl_all_inds, col_conf_prob));
 end
-nn1_resp_list = [resp_vec, 1-resp_vec];
+nn1_resp_list = [resp_vec, 1-resp_vec]; 
+nn1_resp_list = nn1_resp_list .* conf_sum_stim';    % 22-JUL-2024
 
 % -> check that Type 1 is indeed fitted
 params_set_type1 = struct;
@@ -493,8 +583,6 @@ if (conf_continuous)
     model_idl_params.conf_half_scale  = conf_half_scale;
     model_idl_params.conf_cont_nb_levels = conf_cont_nb_levels;
 
-    model_idl_params.conf_bnds = conf_bnd_labels;
-
     % -> tries to match (gamma, p0) to confidence data
     fixed_vals_idl = struct;
     fixed_vals_idl.sens_noise = idl_sens_noise;
@@ -506,9 +594,6 @@ if (conf_continuous)
     fixed_vals_idl.conf_cont_range = conf_cont_range;
     fixed_vals_idl.conf_half_scale = conf_half_scale;
     fixed_vals_idl.conf_cont_nb_levels = conf_cont_nb_levels;
-
-    fixed_vals_idl.conf_bnds = conf_bnd_labels;
-
 
     params_set_idl = default_params_set;
 
@@ -530,10 +615,15 @@ if (conf_continuous)
         params_set_idl.llo_p0 = nb_params_to_fit;
     end
     if (params_set_idl.llo_p0 == nb_params_to_fit)
-        % nb_params_to_fit = nb_params_to_fit + 1;
+        nb_params_to_fit = nb_params_to_fit + 1; 
     else
         fixed_vals_idl.llo_p0 = fixed_vals.llo_p0;
     end
+
+    % -> try to adjust the confidence boundaries because here we are 
+    %    interested in fitting a curve to the Type 2 ROC, not the
+    %    exact points where the human observer set her boundaries.
+    params_set_idl.conf_bnds = nb_params_to_fit - 1 + (1:rating_bnds_nb);
 
     params0_idl  = extract_params_from_struct(params_set_idl, initial_params);
     paramsLB_idl = extract_params_from_struct(params_set_idl, lo_bnd_params);
@@ -551,6 +641,8 @@ if (conf_continuous)
     paramBest_struct = pack_params_in_struct(best_params_ideal, params_set_idl, fixed_vals_idl);
     model_idl_params.llo_gamma = paramBest_struct.llo_gamma;
     model_idl_params.llo_p0 = paramBest_struct.llo_p0;
+
+    model_idl_params.conf_bnds = sort(paramBest_struct.conf_bnds);
 
 else
     params_set_idl = default_params_set;
@@ -588,8 +680,9 @@ end
 ideal_rating_SRC = cncb_core(stim_lst, model_idl_params);
 
 ideal_SRC_cumul = conf_cumul(ideal_rating_SRC);
-ideal_cumul_tofit = [ideal_SRC_cumul(:,col_conf_prob), 1 - ideal_SRC_cumul(:,col_conf_prob)];
-
+ideal_cumul_tofit = [ideal_SRC_cumul(:,col_conf_prob), ...
+                 1 - ideal_SRC_cumul(:,col_conf_prob)];
+ideal_cumul_tofit = ideal_cumul_tofit .* conf_sum_stim_resp';
 
 % ------------------------------------------------------------------------
 % -> 3. 'super-human': build the super-ideal confidence observer
@@ -604,9 +697,6 @@ fixed_vals_super.sens_crit  = idl_sens_crit;
 fixed_vals_super.conf_crit  = default_conf_crit;
 fixed_vals_super.conf_boost = superideal_conf_boost;
 fixed_vals_super.conf_continuous  = conf_continuous;
-fixed_vals_super.conf_cont_range = conf_cont_range;
-fixed_vals_super.conf_half_scale = conf_half_scale;
-fixed_vals_super.conf_cont_nb_levels = conf_cont_nb_levels;
 
 params0_super = initial_conf_noise;
 paramsLB_super = lo_bnd_conf_noise;
@@ -621,14 +711,14 @@ if (conf_continuous)
     fixed_vals_super.conf_half_scale  = conf_half_scale;
     fixed_vals_super.conf_cont_nb_levels = conf_cont_nb_levels;
     
-    fixed_vals_super.conf_bnds = conf_bnd_labels; % new 06/03/2024
-
     params_set_super.llo_gamma = 2;
     params_set_super.llo_p0 = 3;
+    params_set_super.conf_bnds = 3 + (1:rating_bnds_nb);
 
-    params0_super = [params0_super, initial_llo_gamma, initial_llo_p0];
-    paramsLB_super = [paramsLB_super, lo_bnd_llo_gamma, lo_bnd_llo_p0];
-    paramsUB_super = [paramsUB_super, hi_bnd_llo_gamma, hi_bnd_llo_p0];
+    params0_super = [params0_super, initial_llo_gamma, initial_llo_p0, initial_conf_bnds];
+    paramsLB_super = [paramsLB_super, lo_bnd_llo_gamma, lo_bnd_llo_p0, lo_bnd_conf_bnds];
+    paramsUB_super = [paramsUB_super, hi_bnd_llo_gamma, hi_bnd_llo_p0, hi_bnd_conf_bnds];
+
 
     my_fun_super = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
         pp, params_set_super, fixed_vals_super)));
@@ -652,6 +742,8 @@ else
         
 end
 
+super_human_df = length(super_human_params);
+
 equiv_noise_hum = super_human_params(1);
 
 
@@ -673,8 +765,7 @@ if (conf_continuous)
     params_super_human.conf_cont_nb_levels = conf_cont_nb_levels;
     params_super_human.llo_gamma = llo_gamma_super_human;
     params_super_human.llo_p0 = llo_p0_super_human;
-
-    params_super_human.conf_bnds = conf_bnd_labels; % new 06/03/2024
+    params_super_human.conf_bnds = sort(super_human_params(4:end));
 
 else
     % -> sort confidence boundaries in increasing order
@@ -685,16 +776,18 @@ else
 
 end
 
-super_human_rating_mat = cncb_core(stim_lst, params_super_human);
+super_human_rating_SRC = cncb_core(stim_lst, params_super_human);
 
 
 % ------------------------------------------------------------------------
 % -> 4. 'super-ideal': get the equivalent noise for the 'ideal' super-ideal 
 %    confidence observer
 
-[super_ideal_params, ~] = fitnll(my_fun_super, ...
+[super_ideal_params, super_ideal_loglike] = fitnll(my_fun_super, ...
     ideal_cumul_tofit, params0_super, paramsLB_super, paramsUB_super, ...
     options2);   
+
+super_ideal_df = length(super_ideal_params);
 
 equiv_noise_idl = super_ideal_params(1);
 
@@ -712,8 +805,7 @@ if (conf_continuous)
     params_super_ideal.conf_cont_range  = conf_cont_range;
     params_super_ideal.conf_half_scale  = conf_half_scale;
     params_super_ideal.conf_cont_nb_levels = conf_cont_nb_levels;
-
-    params_super_ideal.conf_bnds = conf_bnd_labels; % new 06/03/2024
+    params_super_ideal.conf_bnds = sort(super_ideal_params(4:end));
 
     params_super_ideal.llo_gamma = super_ideal_params(2);
     params_super_ideal.llo_p0 = super_ideal_params(3);
@@ -722,11 +814,34 @@ else
     params_super_ideal.conf_bnds  = super_ideal_rtng_bnd_lst;
 end
 
-super_ideal_rating_mat = cncb_core(stim_lst, params_super_ideal);
+super_ideal_rating_SRC = cncb_core(stim_lst, params_super_ideal);
 
 
+
+% -> ********
 % -> use ratio of variance (std dev squared) for definition of efficiency
 efficiency = (equiv_noise_idl / equiv_noise_hum)^2;
+
+% -> compute Deviance for efficiency
+super_human_fun_sat = @(pp) lastcol(conf_cumul(src_data_norm));
+super_human_loglike_sat = - loglikefcn([], super_human_fun_sat, human_cumul_tofit);
+super_human_df_sat = size(human_cumul_tofit, 1);
+
+super_ideal_fun_sat = @(pp) lastcol(conf_cumul(ideal_rating_SRC));
+super_ideal_loglike_sat = - loglikefcn([], super_ideal_fun_sat, ideal_cumul_tofit);
+super_ideal_df_sat = size(ideal_cumul_tofit, 1);
+
+eff_model_loglike = super_human_loglike + super_ideal_loglike;
+eff_sat_loglike = super_human_loglike_sat + super_ideal_loglike_sat;
+
+eff_G2 = -2 * (eff_model_loglike - eff_sat_loglike);
+
+eff_model_df = super_human_df + super_ideal_df;
+eff_sat_df = super_human_df_sat + super_ideal_df_sat;
+
+eff_df_chi2 = eff_sat_df - eff_model_df;
+eff_p_val = chi2cdf(eff_G2, eff_model_df, 'upper');   % if p>0.01, good fit
+
 
 end     % ~skip_efficiency
 
@@ -743,9 +858,6 @@ fixed_vals_full = struct;
 fixed_vals_full.sens_noise = idl_sens_noise;
 fixed_vals_full.sens_crit  = idl_sens_crit;
 fixed_vals_full.conf_continuous  = conf_continuous;
-fixed_vals_full.conf_cont_range = conf_cont_range;
-fixed_vals_full.conf_half_scale = conf_half_scale;
-fixed_vals_full.conf_cont_nb_levels = conf_cont_nb_levels;
 
 
 % -> check that Type 2 parameters are indeed fitted
@@ -792,7 +904,9 @@ if (conf_continuous)
     fixed_vals_full.conf_half_scale  = conf_half_scale;
     fixed_vals_full.conf_cont_nb_levels = conf_cont_nb_levels;
 
-    fixed_vals_full.conf_bnds = conf_bnd_labels; % new 06/03/2024
+    % -> do not fit the confidence boundaries since there seems
+    %    to be a trade-off with confidence noise and boost
+    fixed_vals_full.conf_bnds = conf_bnd_labels;
 
     if (isfield(my_model_params, 'llo_gamma'))
         params_set_full.llo_gamma = params_set2.llo_gamma;
@@ -815,6 +929,7 @@ if (conf_continuous)
     else
         fixed_vals_full.llo_p0 = fixed_vals.llo_p0;
     end
+
 
 else
 
@@ -880,7 +995,7 @@ for nn = 1:noise2_init_nb
         pp, params_set_full, fixed_vals_full)));
 
     [paramBest, loglike] = fitnll(my_fun_full, human_cumul_tofit, ...
-        params0_full, paramsLB_full, paramsUB_full, options1);
+        params0_full, paramsLB_full, paramsUB_full, options3);
 
 
     paramBest_mat(bb, nn, :) = paramBest;
@@ -919,6 +1034,17 @@ full_conf_crit  = model_full_params.conf_crit;
 
 full_rating_SRC = cncb_core(stim_lst, model_full_params);
 
+
+% -> compute Deviance
+my_fun_sat = @(pp) lastcol(conf_cumul(src_data_norm));
+loglike_sat = - loglikefcn([], my_fun_sat, human_cumul_tofit);
+G2 = -2 * (model_full_loglike - loglike_sat);
+df_sat = size(human_cumul_tofit, 1);
+df_full = length(paramBest);
+df_chi2 = df_sat - df_full;
+p_val = chi2cdf(G2, df_chi2, 'upper');    % if p>0.01, good fit
+
+
 end
 
 % ------------------------------------------------------------------------
@@ -929,51 +1055,76 @@ cncb_fit_struct.sens_crit  = idl_sens_crit;      % sensory criterion
 if (~only_efficiency)
     cncb_fit_struct.conf_noise = full_conf_noise;    % sdtev of noise for Type 2 decision (0 = ideal)
     cncb_fit_struct.conf_boost = full_conf_boost;    % fraction super-ideal (1 - fraction ideal)
+
+    if (default_params_set.conf_crit > 0)
+        cncb_fit_struct.conf_crit  = full_conf_crit;     % criterion for Type 2 decision (criterion)
+    end
+    
+    full_struct = struct;
 end
-cncb_fit_struct.conf_crit  = full_conf_crit;  % criterion for Type 2 decision (criterion)
 
 
 if (~skip_efficiency)
     cncb_fit_struct.efficiency = efficiency;                   % efficiency
-    cncb_fit_struct.equiv_conf_noise_ideal = equiv_noise_idl;  % equivalent noise 2 for ideal perf
-    cncb_fit_struct.equiv_conf_noise_human = equiv_noise_hum;  % equivalent noise 2 for human perf
+
+    eff_struct = struct;
+    eff_struct.equiv_conf_noise_ideal = equiv_noise_idl;  % equivalent noise 2 for ideal perf
+    eff_struct.equiv_conf_noise_human = equiv_noise_hum;  % equivalent noise 2 for human perf
+
 end
 
 if (conf_continuous)
     if (~only_efficiency)
-        cncb_fit_struct.llo_gamma_ideal       = model_idl_params.llo_gamma;
-        cncb_fit_struct.llo_p0_ideal          = model_idl_params.llo_p0;
-        cncb_fit_struct.llo_gamma_super_ideal = params_super_ideal.llo_gamma;
-        cncb_fit_struct.llo_p0_super_ideal    = params_super_ideal.llo_p0;
-        cncb_fit_struct.llo_gamma_super_human = params_super_human.llo_gamma;
-        cncb_fit_struct.llo_p0_super_human    = params_super_human.llo_p0;
-        cncb_fit_struct.llo_gamma_full        = model_full_params.llo_gamma;
-        cncb_fit_struct.llo_p0_full           = model_full_params.llo_p0;
+        eff_struct.llo_gamma_ideal       = model_idl_params.llo_gamma;
+        eff_struct.llo_p0_ideal          = model_idl_params.llo_p0;
+        eff_struct.llo_gamma_super_ideal = params_super_ideal.llo_gamma;
+        eff_struct.llo_p0_super_ideal    = params_super_ideal.llo_p0;
+        eff_struct.llo_gamma_super_human = params_super_human.llo_gamma;
+        eff_struct.llo_p0_super_human    = params_super_human.llo_p0;
 
-        % cncb_fit_struct.conf_bnd_full         = model_full_params.conf_bnds;
+        full_struct.llo_gamma_full        = model_full_params.llo_gamma;
+        full_struct.llo_p0_full           = model_full_params.llo_p0;
     end
 else
     if (~skip_efficiency)
-        cncb_fit_struct.conf_bnd_ideal       = bnd_lst_ideal;
-        cncb_fit_struct.conf_bnd_super_ideal = super_ideal_rtng_bnd_lst;
-        cncb_fit_struct.conf_bnd_super_human = super_human_rtng_bnd_lst;
+        eff_struct.conf_bnd_ideal       = bnd_lst_ideal;
+        eff_struct.conf_bnd_super_ideal = super_ideal_rtng_bnd_lst;
+        eff_struct.conf_bnd_super_human = super_human_rtng_bnd_lst;        
     end
     if (~only_efficiency)
-        cncb_fit_struct.conf_bnd_full        = sort(model_full_params.conf_bnds);
+        full_struct.conf_bnd_full        = sort(model_full_params.conf_bnds);
     end
 end
 
 if (~skip_efficiency)
-    cncb_fit_struct.conf_rating_ideal_SRC       = ideal_rating_SRC;
-    cncb_fit_struct.conf_rating_super_ideal_SRC = super_ideal_rating_mat;
-    cncb_fit_struct.conf_rating_super_human_SRC = super_human_rating_mat;
+    eff_struct.conf_rating_ideal_SRC       = ideal_rating_SRC;
+    eff_struct.conf_rating_super_ideal_SRC = super_ideal_rating_SRC;
+    eff_struct.conf_rating_super_human_SRC = super_human_rating_SRC;
+
+    eff_struct.loglike_model = eff_model_loglike;
+    eff_struct.loglike_saturated = eff_sat_loglike;
+    eff_struct.df_model = eff_model_df;
+    eff_struct.df_saturated = eff_sat_df;
+    eff_struct.chi2_G2 = eff_G2;
+    eff_struct.chi2_df = eff_df_chi2;
+    eff_struct.chi2_p = eff_p_val;     % if p>0.01, good fit
+    
+    cncb_fit_struct.eff_struct = eff_struct;
 end
 
 if (~only_efficiency)
-    cncb_fit_struct.conf_rating_full_SRC    = full_rating_SRC;
-    cncb_fit_struct.loglike = model_full_loglike;   % log-likelihood of best fit
-else
-    cncb_fit_struct.loglike = super_human_loglike;  % take this log-like as approx.
+    full_struct.conf_rating_full_SRC    = full_rating_SRC;
+
+    full_struct.loglike_model = model_full_loglike;  % log-likelihood of best fit
+    full_struct.loglike_saturated = loglike_sat;
+    full_struct.df_model = df_full;
+    full_struct.df_saturated = df_sat;
+    full_struct.chi2_G2 = G2;
+    full_struct.chi2_df = df_chi2;
+    full_struct.chi2_p = p_val;     % if p>0.01, good fit
+
+    cncb_fit_struct.full_struct = full_struct;
+
 end
 
 if (verbose_flag >= 2)
@@ -1020,12 +1171,16 @@ function my_vec = lastcol(my_mat)
 end
 
 
-% -> compute cumulative confidence probabilites (for HR2 and FA2)
-function cncb_cumul = conf_cumul(norm_src_local)
+% -> compute cumulative confidence probabilites p(conf | stim, resp)
+%    Warning: removes the last value (always 1) to avoid singularities in fit
+function cncb_cumul_cropped = conf_cumul(norm_src_local)
 
     cncb_cumul = norm_src_local;
     cond_mat_loc = unique(norm_src_local(:, [1,2]), 'rows');
     cond_nb_loc = size(cond_mat_loc, 1);
+
+    cncb_cumul_cropped = NaN(size(cncb_cumul));
+    curr_lines = 0;
 
     for cc = 1:cond_nb_loc
         cond_val_loc = cond_mat_loc(cc, :);
@@ -1038,8 +1193,21 @@ function cncb_cumul = conf_cumul(norm_src_local)
             cum_tmp = cum_tmp + norm_src_local(conf_inds(uu), 4);
             cncb_cumul(conf_inds(uu), 4) = cum_tmp;
         end
-        cncb_cumul(conf_inds, 4) = cncb_cumul(conf_inds, 4) / cum_tmp;
-    end 
+        if (cum_tmp > 0)
+            cncb_cumul(conf_inds, 4) = cncb_cumul(conf_inds, 4) / cum_tmp;
+        else
+            % -> exceptionnal case when this (stim,resp) was not obtained
+            cncb_cumul(conf_inds(end), 4) = 1.0;
+        end
+
+        add_lines = conf_nb - 1;
+        crop_inds = (curr_lines+1):(curr_lines+add_lines);
+        cumu_inds = conf_inds(1:(conf_nb-1));
+        cncb_cumul_cropped(crop_inds, :) = cncb_cumul(cumu_inds, :);
+        curr_lines = curr_lines+add_lines;
+    end
+
+    cncb_cumul_cropped = cncb_cumul_cropped(1:curr_lines, :);
 end
 
 
@@ -1109,6 +1277,8 @@ end
 
 
 % -> negative summed log-likelihood
+%    this is the log-likelihood of the binomial functions, ignoring the
+%    binomial coefficients that usually cancel out in models comparison
 function nglglk = loglikefcn(pp, ff, nn)
 
     ypred = ff(pp);

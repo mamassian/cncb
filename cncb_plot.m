@@ -48,6 +48,8 @@
 % 15-OCT-2022 - pm: added 'cncb_plot_struct' output
 % 25-OCT-2023 - pm: added continuous confidence plot
 % 10-MAR-2024 - pm: cleaned up
+% 01-APR-2024 - pm: fixed 'xmax' in continuous case
+% 01-JUN-2024 - pm: reverse the 'x' and 'y' axes for confidence plots
 
 
 function cncb_plot_struct = cncb_plot(cncb_data, varargin)
@@ -56,8 +58,10 @@ function cncb_plot_struct = cncb_plot(cncb_data, varargin)
 dflt_human_model         = [];	   % human against model choice
 dflt_t1_psychometric     = false;  % type-1 psychometric functions
 dflt_t2_ratings          = false;  % type-2 ratings
-dflt_t2_roc              = false;     % type-2 ROC: logical, model_params, or rating_mat
+dflt_t2_roc              = false;  % type-2 ROC: logical, model_params, or rating_mat
+dflt_t2_zroc             = false;  % type-2 zROC: logical, model_params, or rating_mat
 dflt_is_continuous       = false;  % continuous (T) or discrete (F) rating scale
+dflt_conf_cont_half_scale  = false;
 dflt_conf_cont_range     = [0, 1];
 dflt_conf_cont_nb_levels = 100;
 
@@ -67,8 +71,10 @@ addRequired(ip, 'cncb_data', @isnumeric);
 addParameter(ip, 'human_model', dflt_human_model, @isnumeric);
 addParameter(ip, 'type1_psychometric', dflt_t1_psychometric);
 addParameter(ip, 'type2_roc', dflt_t2_roc);
+addParameter(ip, 'type2_zroc', dflt_t2_zroc);
 addParameter(ip, 'type2_ratings', dflt_t2_ratings);
 addParameter(ip, 'confidence_is_continuous', dflt_is_continuous, @islogical);
+addParameter(ip, 'confidence_half_scale', dflt_conf_cont_half_scale, @islogical);
 addParameter(ip, 'confidence_cont_range', dflt_conf_cont_range, @isnumeric);
 addParameter(ip, 'confidence_cont_nb_levels', dflt_conf_cont_nb_levels, @isnumeric);
 
@@ -77,8 +83,10 @@ plot_human_model = ip.Results.human_model;
 plot_t1_psychometric = ip.Results.type1_psychometric;
 plot_t2_ratings = ip.Results.type2_ratings;
 plot_t2_roc = ip.Results.type2_roc;
+plot_t2_zroc = ip.Results.type2_zroc;
 conf_continuous = ip.Results.confidence_is_continuous;
-conf_range = ip.Results.confidence_cont_range;
+conf_half_scale = ip.Results.confidence_half_scale;
+conf_cont_range = ip.Results.confidence_cont_range;
 conf_cont_nb_levels = ip.Results.confidence_cont_nb_levels;
 
 % -> prepare output variables
@@ -90,10 +98,39 @@ col_resp = 2;
 col_conf_levl = 3;
 col_conf_prob = 4;
 
+% -> parameters for 'type2_ratings':
+%    set thresholds on number of confidence levels to display different stuff
+many_confs1 = 6;
+many_confs2 = 12;
+
+% -> random stuff
+mtlb_colors = [...
+    0.0000, 0.4470, 0.7410;
+    0.8500, 0.3250, 0.0980;
+    0.9290, 0.6940, 0.1250;
+    0.4940, 0.1840, 0.5560;
+    0.4660, 0.6740, 0.1880;
+    0.3010, 0.7450, 0.9330;
+    0.6350, 0.0780, 0.1840];
+
+% -> ********************************************** <-
+
 % -> if raw data have only 3 columns, add a 4th one
 if (size(cncb_data, 2) < col_conf_prob)
     nb_lines = size(cncb_data, 1);
     cncb_data = [cncb_data, ones(nb_lines, 1)];
+end
+
+% -> clean up input data
+if (conf_continuous)
+    cncb_data = cncb_group(cncb_data, ...
+        'confidence_is_continuous', conf_continuous, ...
+        'confidence_cont_range', conf_cont_range, ...
+        'confidence_half_scale', conf_half_scale, ...
+        'confidence_cont_nb_levels', conf_cont_nb_levels);
+else
+    cncb_data = cncb_group(cncb_data, ...
+        'confidence_is_continuous', conf_continuous);
 end
 
 [stim_lst, ~, stim_ic] = unique(cncb_data(:, col_stim));
@@ -134,8 +171,8 @@ cncb_plot_struct.t1_response_count = resp_count_lst;
 
 
 if (conf_continuous)
-    conf_bnd_min = conf_range(1);
-    conf_bnd_max = conf_range(end);
+    conf_bnd_min = conf_cont_range(1);
+    conf_bnd_max = conf_cont_range(end);
 
     % -> edges of confidence ratings
     conf_labels_step = (conf_bnd_max - conf_bnd_min) / conf_cont_nb_levels;
@@ -162,18 +199,6 @@ end
 cncb_data_norm(:, col_conf_prob) = data_SRC_norm;
 
 
-% -> ********************************************** <-
-
-mtlb_colors = [...
-    0.0000, 0.4470, 0.7410;
-    0.8500, 0.3250, 0.0980;
-    0.9290, 0.6940, 0.1250;
-    0.4940, 0.1840, 0.5560;
-    0.4660, 0.6740, 0.1880;
-    0.3010, 0.7450, 0.9330;
-    0.6350, 0.0780, 0.1840];
-
-
 % -> ******************************************************************* <-
 % -> plot psychometric function for perceptual decisions
 goaheadandplot = 0;
@@ -181,6 +206,8 @@ if (islogical(plot_t1_psychometric))
     if (plot_t1_psychometric)
         goaheadandplot = 1;
     end
+elseif (isstruct(plot_t1_psychometric))
+    goaheadandplot = 2;
 end
 
 if (goaheadandplot)
@@ -204,7 +231,18 @@ if (goaheadandplot)
     sizes = 100 * resp_count_lst ./ max_size + 0.01;
     sizes(sizes==0) = 0.1;
     scatter(stim_lst, resp_prob_lst, sizes, col, 'filled', 'LineWidth', 2);
-    plot(stim_lst, resp_prob_lst, '-', 'Color', col, 'LineWidth', 3);
+
+    if (goaheadandplot == 2)
+        sens_noise = plot_t1_psychometric.sens_noise;  % sensory noise
+        sens_crit  = plot_t1_psychometric.sens_crit;   % sensory criterion
+        xvals = linspace(xmin, xmax, 100);
+        yvals = basic_normcdf(xvals, sens_crit, sens_noise);
+        plot(xvals, yvals, '-', 'Color', col, 'LineWidth', 3);
+
+        cncb_plot_struct.t1_psychometric = [xvals; yvals];
+    else
+        plot(stim_lst, resp_prob_lst, '-', 'Color', col, 'LineWidth', 3);
+    end
 
     xlim([xmin, xmax]);
     ylim([0, 1]);
@@ -248,6 +286,8 @@ if (size(plot_human_model, 1) ~= 0)
                 conf_ind = (ww - 1)*(resp_nb*conf_nb) + (rr - 1)*conf_nb + cc;
                 total1(conf_ind) = total_resp;
 
+                % -> 'human_chosen' should be the same as 'cncb_data_norm(:,4)',
+                %    but recompute it just to be consistent with 'model_chosen'
                 hum_logical_filter = (hum_logical_filter_rr & (conf_ic == cc));
                 conf_val = sum(cncb_data(hum_logical_filter, col_conf_prob));
                 conf_val = conf_val / hum_nb_resps;
@@ -261,6 +301,8 @@ if (size(plot_human_model, 1) ~= 0)
         end
     end
 
+    % -> take care of the rare event when a pair (stim, resp) is not happening
+    total1(total1==0) = NaN;
 
     fig = figure;
     fig_pos = get(fig, 'Position');
@@ -302,10 +344,6 @@ elseif (ismatrix(plot_t2_ratings))
     [~, ~, mod_stim_ic] = unique(rating_mat(:, col_stim));
     [~, ~, mod_resp_ic] = unique(rating_mat(:, col_resp));
 end
-
-% -> set thresholds on number of confidence levels to display different stuff
-many_confs1 = 6;
-many_confs2 = 12;
 
 if (plot_t2_ratings_cond)
     fig = figure('Name', 'Type 2 ratings');
@@ -360,23 +398,20 @@ if (plot_t2_ratings_cond)
             % -> adjust label to represent end of bin
             too_many_confs = (hist_nb_bins > many_confs1);
             
-            xmax = max(xmax, max(conf_counts));
             if (rr == 1)
                 conf_counts = - conf_counts;
             end
             
-            if (too_many_confs)
-                % conf_width = 1.0;
+            if ((too_many_confs) || (conf_continuous))
                 conf_width = inter_label;
             else
-                hh = barh(conf_labels, conf_counts, 'FaceColor', [1, 1, 1], ...
+                hh = bar(conf_labels, conf_counts, 'FaceColor', [1, 1, 1], ...
                     'EdgeColor', my_col, 'LineWidth', 3);
                 hh.EdgeAlpha = 0.5;
 
                 conf_width = hh.BarWidth;
             end
             
-            % conf_width_lst = NaN(1, hist_nb_bins);
             for conf_ii = 1:hist_nb_bins
                 conf_xx = conf_counts(conf_ii);
 
@@ -385,7 +420,7 @@ if (plot_t2_ratings_cond)
                         conf_y1 = conf_labels(conf_ii-1);
                     else
                         if (~ismember('confidence_cont_range', ip.UsingDefaults))
-                            conf_y1 = conf_range(1);
+                            conf_y1 = conf_cont_range(1);
                         else
                             conf_y1 = 2*conf_labels(conf_ii) - conf_labels(conf_ii+1);
                         end
@@ -399,17 +434,21 @@ if (plot_t2_ratings_cond)
                     conf_y2 = conf_labels(conf_ii) + conf_width/2;
                 end
 
+                xmax = max(xmax, abs(conf_xx));
+
                 conf_xvals = [conf_xx, 0.0, 0.0, conf_xx];
                 conf_yvals = [conf_y1, conf_y1, conf_y2, conf_y2];
                 
                 alpha_val = 0.2 + 0.6 * (conf_ii / hist_nb_bins);
-                fill(conf_xvals, conf_yvals, my_col, 'FaceAlpha', alpha_val, ...
+                fill(conf_yvals, conf_xvals, my_col, 'FaceAlpha', alpha_val, ...
                     'EdgeColor', 'none');
             end
             
 
             % -> draw a black base for the bars
-            barh(conf_labels, zeros(size(conf_labels)), 1.0, 'FaceColor', [1, 1, 1], ...
+            %    (there is a bug to be fixed for continuous distributions)
+            conf_labels = unique(conf_labels);
+            bar(conf_labels, zeros(size(conf_labels)), 1.0, 'FaceColor', [1, 1, 1], ...
                 'EdgeColor', [0.5, 0.5, 0.5], 'LineWidth', 3);
 
             % -> plot model
@@ -419,13 +458,14 @@ if (plot_t2_ratings_cond)
                 mod_conf_labels = rating_mat((mod_stim_ic==ss) & (mod_resp_ic==rr), ...
                     col_conf_levl);
 
+                xmax = max(xmax, max(abs(conf_model)));
 
                 for conf_ii = 1:length(mod_conf_labels)
                     if (conf_ii ~= 1)
                         conf_y1 = mod_conf_labels(conf_ii-1);
                     else
                         if (~ismember('confidence_cont_range', ip.UsingDefaults))
-                            conf_y1 = conf_range(1);
+                            conf_y1 = conf_cont_range(1);
                         else
                             conf_y1 = 2*mod_conf_labels(conf_ii) - mod_conf_labels(conf_ii+1);
                         end
@@ -450,11 +490,11 @@ if (plot_t2_ratings_cond)
                 end
 
                 if (length(mod_conf_labels) <= many_confs2)
-                    plot(conf_model, mod_conf_labels, 'o-', ...
+                    plot(mod_conf_labels, conf_model, 'o-', ...
                         'MarkerSize', 14, 'MarkerFaceColor', [1 1 1], ...
                         'Color', my_col, 'LineWidth', 4);
                 else
-                    plot(conf_model, mod_conf_labels, '-', ...
+                    plot(mod_conf_labels, conf_model, '-', ...
                         'Color', my_col, 'LineWidth', 4);
                 end
             end
@@ -462,28 +502,32 @@ if (plot_t2_ratings_cond)
         end
 
         if (~ismember('confidence_cont_range', ip.UsingDefaults))
-            ylim(conf_range);
+            xlim(conf_cont_range);
         else
-            ylim([conf_labels(1)-0.5*inter_label, ...
+            xlim([conf_labels(1)-0.5*inter_label, ...
                 conf_labels(end)+0.5*inter_label]);
+            if (hist_nb_bins <= 6)
+                set(gca, 'XTick', conf_labels);
+            end
         end
         
         if (stim_nb == 2)
-            xlabel('Confidence Prob.', 'FontSize', 26);
+            ylabel('Confidence Prob.', 'FontSize', 26);
             if (ss == 1)
-                ylabel('Confidence Level', 'FontSize', 26);
+                xlabel('Confidence Level', 'FontSize', 26);
             end
         elseif (ss == stim_nb)
-            xlabel('Confidence Prob.', 'FontSize', 26);
-            ylabel('Confidence Level', 'FontSize', 26);
+            ylabel('Confidence Prob.', 'FontSize', 26);
+            xlabel('Confidence Level', 'FontSize', 26);
         end
 
     end
     
-    % -> adjust x-axes
-    xmax = ceil(xmax * 10) / 10;
-    xtic = linspace(-xmax, xmax, 5);
-    xlbl = num2cell(abs(xtic));
+    % -> adjust y-axes
+    xmax2 = floor(log10(xmax));
+    xmax = ceil(xmax / (10^xmax2)) * (10^xmax2);
+    ytic = linspace(-xmax, xmax, 5);
+    ylbl = num2cell(abs(ytic));
     
     for ss = 1:stim_nb
         if (stim_nb == 2)
@@ -496,8 +540,8 @@ if (plot_t2_ratings_cond)
             end
             subplot(2, max_panels, ind_panel);
         end
-        xlim([-xmax, xmax]);
-        set(gca, 'XTick', xtic, 'XTickLabel', xlbl);
+        ylim([-xmax, xmax]);
+        set(gca, 'YTick', ytic, 'YTickLabel', ylbl);
     end
     
 end
@@ -506,13 +550,7 @@ end
 
 % -> ******************************************************************* <-
 % -> plot Type 2 ROC
-if (islogical(plot_t2_roc))
-    if (plot_t2_roc)
-        plot_t2_roc_cond = 1;
-    else
-        plot_t2_roc_cond = 0;
-    end
-elseif (ismatrix(plot_t2_roc))
+if ((ismatrix(plot_t2_roc)) && ~(islogical(plot_t2_roc)))
     % -> a struct is also an array, but of size 1
     if (size(plot_t2_roc, 1) == 1)
         plot_t2_roc_cond = 3;
@@ -522,12 +560,44 @@ elseif (ismatrix(plot_t2_roc))
         plot_t2_roc_cond = 2;
         rating_mat = plot_t2_roc;
     end
+    plot_zscore = 0;
+
+elseif ((ismatrix(plot_t2_zroc)) && ~(islogical(plot_t2_zroc)))
+    if (size(plot_t2_zroc, 1) == 1)
+        plot_t2_roc_cond = 3;
+        model_params = plot_t2_zroc;
+        rating_mat = cncb_core(stim_lst, model_params);
+    else    
+        plot_t2_roc_cond = 2;
+        rating_mat = plot_t2_zroc;
+    end
+    plot_zscore = 1;
+
+elseif ((islogical(plot_t2_roc)) || (islogical(plot_t2_zroc)))
+    if ((plot_t2_roc) || (plot_t2_zroc))
+        plot_t2_roc_cond = 1;
+        if (plot_t2_zroc)
+            plot_zscore = 1;
+        else
+            plot_zscore = 0;
+        end
+    else
+        plot_t2_roc_cond = 0;
+    end
+
+else
+    plot_t2_roc_cond = 0;
 end
+
 
 if (plot_t2_roc_cond)
     hum_roc_lst = src_to_roc(cncb_data);
 
-    fig = figure('Name', 'Type 2 ROC');
+    if (plot_zscore)
+        fig = figure('Name', 'Type 2 zROC');
+    else
+        fig = figure('Name', 'Type 2 ROC');
+    end
     fig_pos = get(fig, 'Position');
     
     if (stim_nb == 2)
@@ -553,7 +623,14 @@ if (plot_t2_roc_cond)
         
         set(gca, 'FontName', 'Arial'); set(gca, 'FontSize', 24);
         hold on;
-        line([0, 1], [0, 1], 'LineStyle', '-', 'Color', [0.5 0.5 0.5], 'LineWidth', 2);
+
+        if (plot_zscore)
+            line([-3, 3], [-3, 3], 'LineStyle', '-', ...
+                'Color', [0.5 0.5 0.5], 'LineWidth', 2);
+        else
+            line([0, 1], [0, 1], 'LineStyle', '-', ...
+                'Color', [0.5 0.5 0.5], 'LineWidth', 2);
+        end
 
         stim_val = stim_lst(mm);
         leg_label(mm) = sprintf('stim: %5.2f', stim_val);
@@ -569,6 +646,11 @@ if (plot_t2_roc_cond)
 
         human_hit2_lst2 = [1.0; human_hit2_lst; 0.0];
         human_fa2_lst2 = [1.0; human_fa2_lst; 0.0];
+
+        if (plot_zscore)
+            human_hit2_lst = norminv(human_hit2_lst);
+            human_fa2_lst  = norminv(human_fa2_lst);
+        end
         
         if (conf_levels_nb <= many_confs2)
             plot(human_fa2_lst, human_hit2_lst, 'o', ...
@@ -581,8 +663,13 @@ if (plot_t2_roc_cond)
         end
         
         if (plot_t2_roc_cond == 1)
+            if (plot_zscore)
+                human_fa2_lst2 = norminv(human_fa2_lst2);
+                human_hit2_lst2 = norminv(human_hit2_lst2);
+            end
             plot(human_fa2_lst2, human_hit2_lst2, '-', ...
                 'Color', my_col1, 'LineWidth', 3);
+
         elseif ((plot_t2_roc_cond == 2) || (plot_t2_roc_cond == 3))
             mdl_conf_levels_nb = size(rating_mat,1) / stim_nb / resp_nb;
             mdl_rating_bnds_nb = mdl_conf_levels_nb - 1;
@@ -595,6 +682,11 @@ if (plot_t2_roc_cond)
             model_hit2_lst2 = [1.0; model_hit2_lst; 0.0];
             model_fa2_lst2 = [1.0; model_fa2_lst; 0.0];
             
+            if (plot_zscore)
+                model_hit2_lst2 = norminv(model_hit2_lst);
+                model_fa2_lst2  = norminv(model_fa2_lst);
+            end
+
             plot(model_fa2_lst2, model_hit2_lst2, '-', ...
                 'Color', my_col1, 'LineWidth', 3);
             
@@ -604,10 +696,16 @@ if (plot_t2_roc_cond)
         cncb_plot_struct.human_type2_roc = [human_fa2_lst; human_hit2_lst];
 
         axis('square');
-        axis([0, 1, 0, 1]);
+        if (plot_zscore)
+            axis([-3, 3, -3, 3]);
+            xticks(-3:1:3);
+            yticks(-3:1:3);
+        else
+            axis([0, 1, 0, 1]);
+            xticks(0.0:0.2:1.0);
+            yticks(0.0:0.2:1.0);
+        end
         
-        xticks(0.0:0.2:1.0);
-        yticks(0.0:0.2:1.0);
         if (stim_nb == 2)
             xlabel('p(high conf | incorrect)', 'FontSize', 26);
             if (mm == 1)
@@ -668,7 +766,7 @@ function data_ROC = src_to_roc(data_SRC)
             data_SRC(lcl_righ_inds, lcl_col_conf_prob) / lcl_resp_R;
 
 
-        if (lcl_ss == 1)
+        if (lcl_ss <= (lcl_stim_nb/2))
             resp_corr = lcl_resp_lst(1);
             resp_inco = lcl_resp_lst(2);
         else
