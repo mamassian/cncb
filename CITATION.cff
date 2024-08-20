@@ -4,7 +4,7 @@ authors:
 - family-names: "Mamassian"
   given-names: "Pascal"
   orcid: "https://orcid.org/0000-0002-1605-4607"
-title: "cncb"
+title: "CNCB toolbox"
 version: 0.1
 doi: 10.5281/zenodo.13348147
 date-released: 2024-08-20
