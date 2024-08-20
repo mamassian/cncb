@@ -13,3 +13,5 @@ The toolbox consists of the following main files:
 
 **Requirements:**
 This toolbox was tested on Matlab R2023b
+
+[![DOI](https://zenodo.org/badge/769956479.svg)](https://zenodo.org/doi/10.5281/zenodo.13348146)
