@@ -1,4 +1,4 @@
-% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.1
+% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.2
 %
 % cncb_core
 %   This function generates predictions of the model for confidence ratings
@@ -20,7 +20,7 @@
 %       'conf_cont_nb_levels'  : if continuous, resolution to fit
 %
 % OUTPUT: cncb_rating_mat 
-%    matrix where each line is [stim, resp, conf, prob(conf)]
+%    matrix where each line is [stim, resp, conf, prob(resp, conf | stim)]
 %
 %
 % 19-AUG-2021 - pascal mamassian

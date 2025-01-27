@@ -1,4 +1,4 @@
-% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.1
+% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.2
 %
 % cncb_fit
 %   This is the wrap function for confidence model fit.
@@ -93,6 +93,7 @@
 % 16-JUN-2024 - pm: added confidence boundaries as parameters for continuous
 % 17-JUL-2024 - pm: added Deviance statistics
 % 22-JUL-2024 - pm: corrected nb trials in likelihood computation
+% 22-DEC-2024 - pm: removed fit of cumulative distributions
 
 
 function cncb_fit_struct = cncb_fit(cncb_data, varargin)
@@ -108,7 +109,7 @@ dflt_is_continuous    = false;  % continuous (T) or discrete (F) rating scale
 dflt_conf_cont_half_scale  = false;
 dflt_conf_cont_range       = [0, 1];
 dflt_conf_cont_nb_levels   = 100;
-dflt_verbose          = 1;      % verbose flag
+dflt_verbose          = 0;      % verbose flag
 
 
 % -> parse all arguments
@@ -144,7 +145,8 @@ verbose_flag    = ip.Results.verbose;
 
 
 options1 = optimset;
-options2 = optimset('TolFun',1e-3, 'TolX',1e-3);
+% options2 = optimset('TolFun',1e-3, 'TolX',1e-3);
+options2 = optimset;
 if (verbose_flag >= 2)
     options3 = optimset('Display','iter');
     tstart = tic;   % start timer
@@ -179,13 +181,21 @@ stim_nb = length(stim_lst);
 
 % -> count how many confidence judgments were made for each stimulus
 %    (useful to compute likelihood)
-conf_count_stim = NaN(1, stim_nb);
-conf_count_lst = NaN(1, size(cncb_data,1));
+conf_count_stim = NaN(stim_nb, 1);
 for ss = 1:stim_nb
     cond_inds = (stim_ic == ss);
     conf_count_stim(ss) = sum(cncb_data(cond_inds, col_conf_prob));
-    conf_count_lst(cond_inds) = conf_count_stim(ss);
 end
+
+
+% -> count how many confidence judgments were made for each confidence level
+[conf_lst, ~, conf_ic] = unique(cncb_data(:, col_conf_levl));
+conf_nb = length(conf_lst);
+conf_count_conf = count_conf(cncb_data, conf_nb, conf_ic);
+
+
+% -> extended stimulus list, with number of trials per stimulus
+stim_lst_extended = [stim_lst, conf_count_stim];
 
 resp_lst = unique(cncb_data(:, col_resp));
 resp_nb = length(resp_lst);
@@ -201,51 +211,47 @@ end
 src_data_norm = src_data_count;
 data_SRC_norm = NaN(size(src_data_norm,1),1);
 data_SRC_count = NaN(size(src_data_norm,1),1);
-if (~conf_continuous)
-    
-    rating_inds = unique(src_data_norm(:, col_conf_levl));
-    conf_levels_nb = length(rating_inds);
-    rating_bnds_nb = conf_levels_nb - 1;
-    
-    % -> convert counts of confidence ratings into probabilities 
-    %    (conditional on stimulus)
-    stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
-    for ss = 1:stim_nb
-        sens_mean = stim_lst(ss);
-        cond_inds = (src_data_norm(:, col_stim) == sens_mean);
-        stim_prob(ss) = sum(src_data_norm(cond_inds, col_conf_prob));
-        data_SRC_norm(cond_inds) = ...
-            src_data_norm(cond_inds, col_conf_prob) ./ stim_prob(ss);
-    end
-    src_data_norm(:, col_conf_prob) = data_SRC_norm;
 
-    % -> use cell padding technique advised in 'type2_SDT_MLE'
-    % cellpadding = 1 / (10*conf_levels_nb);
-    cellpadding = 1 / (100000*conf_levels_nb);
-    if any(src_data_norm(:,col_conf_prob) < cellpadding)
-        inds = find(src_data_norm(:,col_conf_prob) < cellpadding);
-        src_data_norm(inds, col_conf_prob) = src_data_norm(inds, col_conf_prob) + ...
-            cellpadding;
-    end
+rating_inds = unique(src_data_norm(:, col_conf_levl));
+conf_levels_nb = length(rating_inds);
+rating_bnds_nb = conf_levels_nb - 1;
 
-    % -> fix the normalization so that cumulative prob is 1
-    stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
-    for ss = 1:stim_nb
-        sens_mean = stim_lst(ss);
-        cond_inds = (src_data_norm(:, col_stim) == sens_mean);
-        stim_prob(ss) = sum(src_data_norm(cond_inds, col_conf_prob));
-        data_SRC_norm(cond_inds) = ...
-            src_data_norm(cond_inds, col_conf_prob) ./ stim_prob(ss);
-    end
-    src_data_norm(:, col_conf_prob) = data_SRC_norm;
+% -> convert counts of confidence ratings into probabilities 
+%    (conditional on stimulus)
+stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
+for ss = 1:stim_nb
+    sens_mean = stim_lst(ss);
+    cond_inds = (src_data_norm(:, col_stim) == sens_mean);
+    stim_prob(ss) = sum(src_data_norm(cond_inds, col_conf_prob));
+    data_SRC_norm(cond_inds) = ...
+        src_data_norm(cond_inds, col_conf_prob) ./ stim_prob(ss);
+end
+src_data_norm(:, col_conf_prob) = data_SRC_norm;
 
-else
-    [conf_lst, ~, ~] = unique(src_data_norm(:, col_conf_levl));
-    conf_bnd_labels = conf_lst';
+% -> use cell padding technique advised in 'type2_SDT_MLE'
+% cellpadding = 1 / (10*conf_levels_nb);
+cellpadding = 1 / (100000*conf_levels_nb);
+if any(src_data_norm(:,col_conf_prob) < cellpadding)
+    inds = find(src_data_norm(:,col_conf_prob) < cellpadding);
+    src_data_norm(inds, col_conf_prob) = src_data_norm(inds, col_conf_prob) + ...
+        cellpadding;
+end
 
+% -> fix the normalization so that cumulative prob is 1
+stim_prob = NaN(1, stim_nb);    % prob. occurence of each stimulus
+for ss = 1:stim_nb
+    sens_mean = stim_lst(ss);
+    cond_inds = (src_data_norm(:, col_stim) == sens_mean);
+    stim_prob(ss) = sum(src_data_norm(cond_inds, col_conf_prob));
+    data_SRC_norm(cond_inds) = ...
+        src_data_norm(cond_inds, col_conf_prob) ./ stim_prob(ss);
+end
+src_data_norm(:, col_conf_prob) = data_SRC_norm;
+
+if (conf_continuous)
+    conf_bnd_labels = rating_inds';
     conf_levels_nb = length(conf_bnd_labels) + 1;
     rating_bnds_nb = conf_levels_nb - 1;
-
 end
 
 % -> normalize to get sum(prob | stim)=1
@@ -257,41 +263,19 @@ for ss = 1:stim_nb
         sum(src_data_norm(cond_inds, col_conf_prob));
     data_SRC_count(cond_inds) = data_SRC_norm(cond_inds) .* conf_count_stim(ss);
 end
-src_data_norm(:, col_conf_prob) = data_SRC_norm;
 src_data_count(:, col_conf_prob) = data_SRC_count;
 
 
-% -> compute confidence sums over (stim) and (stim, resp)
-conf_nb0 = size(src_data_count, 1);
-[cond_mat, ~, cond_ic] = unique(src_data_count(:, [1,2]), 'rows');
-cond_nb = size(cond_mat, 1);
-
+% -> compute confidence sums over (stim)
 conf_sum_stim = NaN(1, stim_nb);
-conf_sum_stim_resp = NaN(1, conf_nb0);
-conf_remove_stim_resp = NaN(1, cond_nb);
-
-for cnd = 1:cond_nb
-    conf_inds5 = (cond_ic == cnd);
-    cum_tmp5 = sum(src_data_count(conf_inds5, 4));
-    conf_sum_stim_resp(conf_inds5) = cum_tmp5;
-
-    % -> collect indices to remove at the end
-    conf_remove_stim_resp(cnd) = find(conf_inds5, 1, 'last');
-end
-conf_sum_stim_resp(conf_remove_stim_resp) = [];
-
 for cnd = 1:stim_nb
     conf_inds5 = (stim_ic == cnd);
     cum_tmp5 = sum(src_data_count(conf_inds5, 4));
     conf_sum_stim(cnd) = cum_tmp5;
 end
 
-
-src_data_cumul = conf_cumul(src_data_norm);
-human_cumul_tofit = [src_data_cumul(:,col_conf_prob), ...
-                 1 - src_data_cumul(:,col_conf_prob)];
-human_cumul_tofit = human_cumul_tofit .* conf_sum_stim_resp';
-
+% -> human data to fit
+human_tofit = lastcol(src_data_count);
 
 
 % -> default values of the parameters
@@ -405,8 +389,6 @@ if (~conf_continuous)
 else
     default_params_set.llo_gamma  = 0;
     default_params_set.llo_p0     = 0;
-
-    % -> 16-JUN-2024
     default_params_set.conf_bnds = 0;
 end
 
@@ -422,8 +404,6 @@ if (~conf_continuous)
 else
     default_params_val.llo_gamma  = default_llo_gamma;
     default_params_val.llo_p0     = default_llo_p0;
-
-    % -> 16-JUN-2024
     default_params_val.conf_bnds = default_conf_bnds;
 end
 
@@ -523,7 +503,7 @@ for ss = 1:stim_nb
                    sum(src_data_count(lcl_all_inds, col_conf_prob));
 end
 nn1_resp_list = [resp_vec, 1-resp_vec]; 
-nn1_resp_list = nn1_resp_list .* conf_sum_stim';    % 22-JUL-2024
+nn1_resp_list = nn1_resp_list .* conf_sum_stim';
 
 % -> check that Type 1 is indeed fitted
 params_set_type1 = struct;
@@ -550,8 +530,9 @@ paramsUB_cumul = extract_params_from_struct(params_set_cumul, hi_bnd_params);
 
 my_fun_0 = @(pp) cfc_type1(stim_lst, pp, params_set_type1, fixed_vals);
 
-param_type1 = fitnll(my_fun_0, nn1_resp_list, ...
+param_type1 = fitnllbin(my_fun_0, nn1_resp_list, ...
     params0_cumul, paramsLB_cumul, paramsUB_cumul, options1);
+
 
 % -> store fitted params for step 2
 model_params_type2 = pack_params_in_struct(param_type1, params_set_type1, fixed_vals);
@@ -631,13 +612,14 @@ if (conf_continuous)
 
     % -> extract (gamma, p0) for the ideal confidence observer
     %    by approximating the confidence frequency in each level
-    my_fun_ideal2 = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
-        pp, params_set_idl, fixed_vals_idl)));
+    my_fun_ideal3 = @(pp) count_conf(cncb_core_count_wrap(stim_lst_extended, ...
+        pp, params_set_idl, fixed_vals_idl), conf_nb, conf_ic);
 
     [best_params_ideal, ~] = ...
-        fitnll(my_fun_ideal2, human_cumul_tofit, ...
+        fitnll(my_fun_ideal3, conf_count_conf, ...
         params0_idl, paramsLB_idl, paramsUB_idl, options1);
-    
+
+
     paramBest_struct = pack_params_in_struct(best_params_ideal, params_set_idl, fixed_vals_idl);
     model_idl_params.llo_gamma = paramBest_struct.llo_gamma;
     model_idl_params.llo_p0 = paramBest_struct.llo_p0;
@@ -662,12 +644,12 @@ else
     
 
     % -> extract the confidence boundaries for the ideal confidence observer
-    %    by approximating the confidence frequency in each level
-    my_fun_ideal2 = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
-        pp, params_set_idl, fixed_vals_idl)));
-
+    %    by adjusting the confidence frequency in each level
+    my_fun_ideal3 = @(pp) count_conf(cncb_core_count_wrap(stim_lst_extended, ...
+        pp, params_set_idl, fixed_vals_idl), conf_nb, conf_ic); 
+    
     [best_params_ideal, ~] = ...
-        fitnll(my_fun_ideal2, human_cumul_tofit, ...
+        fitnll(my_fun_ideal3, conf_count_conf, ...
         params0_idl, paramsLB_idl, paramsUB_idl, options1);
     
     % -> boundaries are sometimes in random order
@@ -679,10 +661,9 @@ end
 % -> compute the confidence ratings for the ideal confidence observer
 ideal_rating_SRC = cncb_core(stim_lst, model_idl_params);
 
-ideal_SRC_cumul = conf_cumul(ideal_rating_SRC);
-ideal_cumul_tofit = [ideal_SRC_cumul(:,col_conf_prob), ...
-                 1 - ideal_SRC_cumul(:,col_conf_prob)];
-ideal_cumul_tofit = ideal_cumul_tofit .* conf_sum_stim_resp';
+ideal_rating_count = cncb_core_count(stim_lst_extended, model_idl_params);
+ideal_tofit = lastcol(ideal_rating_count);
+
 
 % ------------------------------------------------------------------------
 % -> 3. 'super-human': build the super-ideal confidence observer
@@ -719,11 +700,10 @@ if (conf_continuous)
     paramsLB_super = [paramsLB_super, lo_bnd_llo_gamma, lo_bnd_llo_p0, lo_bnd_conf_bnds];
     paramsUB_super = [paramsUB_super, hi_bnd_llo_gamma, hi_bnd_llo_p0, hi_bnd_conf_bnds];
 
+    my_fun_super = @(pp) lastcol(cncb_core_wrap(stim_lst, ...
+        pp, params_set_super, fixed_vals_super)); 
 
-    my_fun_super = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
-        pp, params_set_super, fixed_vals_super)));
-
-    [super_human_params, super_human_loglike] = fitnll(my_fun_super, human_cumul_tofit, ...
+    [super_human_params, super_human_loglike] = fitnll(my_fun_super, human_tofit, ...
         params0_super, paramsLB_super, paramsUB_super, options2);
 
 else
@@ -734,10 +714,10 @@ else
     paramsLB_super = [paramsLB_super, lo_bnd_conf_bnds];
     paramsUB_super = [paramsUB_super, hi_bnd_conf_bnds];
             
-    my_fun_super = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
-        pp, params_set_super, fixed_vals_super)));
+    my_fun_super = @(pp) lastcol(cncb_core_wrap(stim_lst, ...
+        pp, params_set_super, fixed_vals_super)); 
 
-    [super_human_params, super_human_loglike] = fitnll(my_fun_super, human_cumul_tofit, ...
+    [super_human_params, super_human_loglike] = fitnll(my_fun_super, human_tofit, ...
         params0_super, paramsLB_super, paramsUB_super, options2);
         
 end
@@ -784,7 +764,7 @@ super_human_rating_SRC = cncb_core(stim_lst, params_super_human);
 %    confidence observer
 
 [super_ideal_params, super_ideal_loglike] = fitnll(my_fun_super, ...
-    ideal_cumul_tofit, params0_super, paramsLB_super, paramsUB_super, ...
+    ideal_tofit, params0_super, paramsLB_super, paramsUB_super, ...
     options2);   
 
 super_ideal_df = length(super_ideal_params);
@@ -817,19 +797,18 @@ end
 super_ideal_rating_SRC = cncb_core(stim_lst, params_super_ideal);
 
 
-
 % -> ********
 % -> use ratio of variance (std dev squared) for definition of efficiency
 efficiency = (equiv_noise_idl / equiv_noise_hum)^2;
 
 % -> compute Deviance for efficiency
-super_human_fun_sat = @(pp) lastcol(conf_cumul(src_data_norm));
-super_human_loglike_sat = - loglikefcn([], super_human_fun_sat, human_cumul_tofit);
-super_human_df_sat = size(human_cumul_tofit, 1);
+super_human_fun_sat = @(pp) lastcol(src_data_norm); 
+super_human_loglike_sat = - loglikefcn([], super_human_fun_sat, human_tofit);
+super_human_df_sat = size(human_tofit, 1);
 
-super_ideal_fun_sat = @(pp) lastcol(conf_cumul(ideal_rating_SRC));
-super_ideal_loglike_sat = - loglikefcn([], super_ideal_fun_sat, ideal_cumul_tofit);
-super_ideal_df_sat = size(ideal_cumul_tofit, 1);
+super_ideal_fun_sat = @(pp) lastcol(ideal_rating_SRC); 
+super_ideal_loglike_sat = - loglikefcn([], super_ideal_fun_sat, ideal_tofit);
+super_ideal_df_sat = size(ideal_tofit, 1);
 
 eff_model_loglike = super_human_loglike + super_ideal_loglike;
 eff_sat_loglike = super_human_loglike_sat + super_ideal_loglike_sat;
@@ -991,10 +970,10 @@ for nn = 1:noise2_init_nb
     end
     
 
-    my_fun_full = @(pp) lastcol(conf_cumul(cncb_core_wrap(stim_lst, ...
-        pp, params_set_full, fixed_vals_full)));
+    my_fun_full = @(pp) lastcol(cncb_core_wrap(stim_lst, ...
+        pp, params_set_full, fixed_vals_full));
 
-    [paramBest, loglike] = fitnll(my_fun_full, human_cumul_tofit, ...
+    [paramBest, loglike] = fitnll(my_fun_full, human_tofit, ...
         params0_full, paramsLB_full, paramsUB_full, options3);
 
 
@@ -1002,28 +981,51 @@ for nn = 1:noise2_init_nb
     loglike_lst(bb, nn) = loglike;
 
     if (verbose_flag >= 1)
-        if ((boost2_init_nb > 1) || (noise2_init_nb > 1))
+        if ((boost2_init_nb > 1) && (noise2_init_nb > 1))
             fprintf(['Init (noise2, boost2) = (%5.3f, %5.3f) > ', ...
                 '(noise2, boost2) = (%5.3f, %5.3f), loglike = %7.4f\n'], ...
                 noise2_init_val, boost2_init_val, ...
                 paramBest(1), paramBest(2), loglike);
+        elseif (noise2_init_nb > 1)
+            fprintf('Init noise2 = %5.3f > noise2 = %5.3f, loglike = %7.4f\n', ...
+                noise2_init_val, paramBest(1), loglike);
+        elseif (boost2_init_nb > 1)
+            fprintf('Init boost2 = %5.3f > boost2 = %5.3f, loglike = %7.4f\n', ...
+                boost2_init_val, paramBest(1), loglike);
         end
     end
 end
 end
 
 % -> pick the initial boost value that led to maximum likelihood
-[jj1, ii1] = max(loglike_lst);
-ii1 = ii1(1);
-[~, ii2] = max(jj1);
+if ((boost2_init_nb > 1) && (noise2_init_nb > 1))
+    [jj1, ii1] = max(loglike_lst);
+    ii1 = ii1(1);
+    [~, ii2] = max(jj1);
+elseif (noise2_init_nb > 1)
+    [~, ii2] = max(loglike_lst);
+    ii1 = 1;
+elseif (boost2_init_nb > 1)
+    [~, ii1] = max(loglike_lst);
+    ii2 = 1;
+else
+    ii1 = 1;
+    ii2 = 1;
+end
 model_full_params = pack_params_in_struct(paramBest_mat(ii1, ii2, :), params_set_full, fixed_vals_full);
 model_full_loglike = loglike_lst(ii1, ii2);
 if (verbose_flag >= 1)
-    if ((boost2_init_nb > 1) || (noise2_init_nb > 1))
-    fprintf(['> choosing fit #(%d, %d): conf_noise = %5.3f, ', ...
+    if ((boost2_init_nb > 1) && (noise2_init_nb > 1))
+        fprintf(['> choosing fit #(%d, %d): conf_noise = %5.3f, ', ...
             'conf_boost = %5.3f, loglike = %7.3f\n'], ... 
             ii1, ii2, model_full_params.conf_noise, ...
             model_full_params.conf_boost, model_full_loglike);
+    elseif (noise2_init_nb > 1)
+        fprintf('> choosing fit #%d: conf_noise = %5.3f, loglike = %7.3f\n', ... 
+            ii2, model_full_params.conf_noise, model_full_loglike);
+    elseif (boost2_init_nb > 1)
+        fprintf('> choosing fit #%d: conf_boost = %5.3f, loglike = %7.3f\n', ... 
+            ii1, model_full_params.conf_boost, model_full_loglike);
    end
 end
 
@@ -1036,10 +1038,10 @@ full_rating_SRC = cncb_core(stim_lst, model_full_params);
 
 
 % -> compute Deviance
-my_fun_sat = @(pp) lastcol(conf_cumul(src_data_norm));
-loglike_sat = - loglikefcn([], my_fun_sat, human_cumul_tofit);
+my_fun_sat = @(pp) lastcol(src_data_norm); 
+loglike_sat = - loglikefcn([], my_fun_sat, human_tofit);
 G2 = -2 * (model_full_loglike - loglike_sat);
-df_sat = size(human_cumul_tofit, 1);
+df_sat = size(human_tofit, 1);
 df_full = length(paramBest);
 df_chi2 = df_sat - df_full;
 p_val = chi2cdf(G2, df_chi2, 'upper');    % if p>0.01, good fit
@@ -1171,43 +1173,13 @@ function my_vec = lastcol(my_mat)
 end
 
 
-% -> compute cumulative confidence probabilites p(conf | stim, resp)
-%    Warning: removes the last value (always 1) to avoid singularities in fit
-function cncb_cumul_cropped = conf_cumul(norm_src_local)
-
-    cncb_cumul = norm_src_local;
-    cond_mat_loc = unique(norm_src_local(:, [1,2]), 'rows');
-    cond_nb_loc = size(cond_mat_loc, 1);
-
-    cncb_cumul_cropped = NaN(size(cncb_cumul));
-    curr_lines = 0;
-
-    for cc = 1:cond_nb_loc
-        cond_val_loc = cond_mat_loc(cc, :);
-        cond_inds_loc = (norm_src_local(:, 1) == cond_val_loc(1)) & ...
-                        (norm_src_local(:, 2) == cond_val_loc(2));
-        conf_inds = find(cond_inds_loc);
-        conf_nb = length(conf_inds);
-        cum_tmp = 0.0;
-        for uu = 1:conf_nb
-            cum_tmp = cum_tmp + norm_src_local(conf_inds(uu), 4);
-            cncb_cumul(conf_inds(uu), 4) = cum_tmp;
-        end
-        if (cum_tmp > 0)
-            cncb_cumul(conf_inds, 4) = cncb_cumul(conf_inds, 4) / cum_tmp;
-        else
-            % -> exceptionnal case when this (stim,resp) was not obtained
-            cncb_cumul(conf_inds(end), 4) = 1.0;
-        end
-
-        add_lines = conf_nb - 1;
-        crop_inds = (curr_lines+1):(curr_lines+add_lines);
-        cumu_inds = conf_inds(1:(conf_nb-1));
-        cncb_cumul_cropped(crop_inds, :) = cncb_cumul(cumu_inds, :);
-        curr_lines = curr_lines+add_lines;
+% -> extract counts of confidence judgments for each level
+function my_vec = count_conf(my_mat, my_conf_nb, my_conf_ic)
+    my_vec = NaN(my_conf_nb, 1);
+    for my_cc = 1:my_conf_nb
+        my_cond_inds = (my_conf_ic == my_cc);
+        my_vec(my_cc) = sum(my_mat(my_cond_inds, 4));
     end
-
-    cncb_cumul_cropped = cncb_cumul_cropped(1:curr_lines, :);
 end
 
 
@@ -1216,6 +1188,28 @@ function pred_rating_mat = cncb_core_wrap(stims, variable_prms, params_set, fixe
 
     model_params = pack_params_in_struct(variable_prms, params_set, fixed_vals);
     pred_rating_mat = cncb_core(stims, model_params);
+end
+
+
+% -> wrapper around cfc_core function to flexibly add parameters
+    function pred_rating_mat = cncb_core_count_wrap(stim_ext, variable_prms, params_set, fixed_vals)
+
+    model_params = pack_params_in_struct(variable_prms, params_set, fixed_vals);
+    pred_rating_mat = cncb_core_count(stim_ext, model_params); 
+end
+
+
+% -> get confidence counts rather than confidence probability 
+function cncb_rating_mat = cncb_core_count(stim_ext, model_params)
+    cncb_rating_mat = cncb_core(stim_ext(:,1), model_params);
+
+    % -> scale confidence probabilities by counts for each stimulus
+    for ii = 1:size(cncb_rating_mat, 1)
+        my_stim_val = cncb_rating_mat(ii, 1);
+        my_count_line = (stim_ext(:, 1) == my_stim_val);
+        my_count_val = stim_ext(my_count_line, 2);
+        cncb_rating_mat(ii, 4) = cncb_rating_mat(ii, 4) * my_count_val;
+    end
 end
 
 
@@ -1276,10 +1270,35 @@ function [params_best, loglike] = fitnll(fit_fcn, nn1_lst, ...
 end
 
 
+% -> fit by maximizing the log-likelihood for binomials
+function [params_best, loglike] = fitnllbin(fit_fcn, nn1_lst, ...
+        params_0, params_LB, params_UB, fit_options)
+
+    fun = @(xx) loglikebinfcn(xx, fit_fcn, nn1_lst);
+    [params_best, nll_best] = fminsearchbnd(fun, ...
+        params_0, params_LB, params_UB, fit_options);
+    loglike = - nll_best;
+end
+
+
 % -> negative summed log-likelihood
+function nglglk = loglikefcn(pp, ff, nn)
+
+    ypred = ff(pp);
+    ypred(ypred < 1e-6) = 1e-6;
+    ypred(ypred > (1 - 1e-6)) = 1 - 1e-6;
+
+    ll = log(ypred);
+
+    ll_vect = nn .* ll;  % vector of log-likelihoods
+    nglglk = - sum(ll_vect);      % minimize (-log) likelihood
+end
+
+
+% -> negative summed log-likelihood for binomials
 %    this is the log-likelihood of the binomial functions, ignoring the
 %    binomial coefficients that usually cancel out in models comparison
-function nglglk = loglikefcn(pp, ff, nn)
+function nglglk = loglikebinfcn(pp, ff, nn)
 
     ypred = ff(pp);
     ypred(ypred < 1e-6) = 1e-6;
@@ -1291,6 +1310,7 @@ function nglglk = loglikefcn(pp, ff, nn)
     ll_vect = nn(:,1) .* ll1 + nn(:,2) .* ll0;  % vector of log-likelihoods
     nglglk = - sum(ll_vect);      % minimize (-log) likelihood
 end
+
 
 % ------------------------------------------------------------------------
 
