@@ -1,4 +1,4 @@
-% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.1
+% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.2
 %
 % cncb_group
 %   This function groups trials from a confidence ratings experiment.
@@ -23,6 +23,9 @@
 %
 %   'confidence_disc_labels': if discrete, a vector of labels for the confidence
 %                levels. Only numeric labels are supported so far.
+%
+%   'sensory_bins': ask to bin stimuli in (value) bins
+%                (useful when stimulus can take any value within a range)
 %
 % OUTPUT:
 %   'grouped_data': grouped data per (stim, resp, conf):
@@ -50,6 +53,7 @@
 % 25-OCT-2023 - pm: fixed continuous ratings
 % 08-MAR-2024 - pm: group continuous ratings by quantiles
 % 31-MAR-2024 - pm: add warning if only one confidence level
+% 05-APR-2025 - pm: added 'sensory_bins' function
 
 
 function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
@@ -60,16 +64,19 @@ function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
     dflt_conf_cont_range      = [0, 1];
     dflt_conf_cont_nb_levels  = 100;    % used to fit continuous data
     dflt_conf_disc_labels     = [];
+    dflt_nb_bins              = 0;      % 0 is a message to not bin input data
 
     % -> parse all arguments
     ip = inputParser;
     ip.StructExpand = false;
+    valid_nb_bins = @(xx) isnumeric(xx) && isscalar(xx) && (xx > 0);
     addRequired(ip, 'raw_data_SRC', @isnumeric);
     addParameter(ip, 'confidence_is_continuous', dflt_is_continuous, @islogical);
     addParameter(ip, 'confidence_half_scale', dflt_conf_cont_half_scale, @islogical);
     addParameter(ip, 'confidence_cont_range', dflt_conf_cont_range, @isnumeric);
     addParameter(ip, 'confidence_cont_nb_levels', dflt_conf_cont_nb_levels, @isnumeric);
     addParameter(ip, 'confidence_disc_labels', dflt_conf_disc_labels, @isnumeric);
+    addParameter(ip, 'sensory_bins', dflt_nb_bins, valid_nb_bins);
 
     parse(ip, raw_data_SRC, varargin{:});
     conf_continuous = ip.Results.confidence_is_continuous;
@@ -77,17 +84,37 @@ function grouped_data_SRC = cncb_group(raw_data_SRC, varargin)
     conf_range = ip.Results.confidence_cont_range;
     conf_cont_nb_levels = ip.Results.confidence_cont_nb_levels;
     conf_disc_labels = ip.Results.confidence_disc_labels;
+    nb_bins = ip.Results.sensory_bins;
 
+    % -> initialize variables
     col_stim = 1;
     col_resp = 2;
     col_conf_levl = 3;
     col_conf_prob = 4;  % prob(conf|stim) or count
+    nb_trials = size(raw_data_SRC, 1);
     
     % -> if raw data have only 3 columns, add a 4th one
     if (size(raw_data_SRC, 2) < col_conf_prob)
-        nb_lines = size(raw_data_SRC, 1);
-        raw_data_SRC = [raw_data_SRC, ones(nb_lines, 1)];
+        raw_data_SRC = [raw_data_SRC, ones(nb_trials, 1)];
     end
+
+    % -> re-organize the data in bins
+    if (nb_bins > 0)
+        stm_data = raw_data_SRC(:, 1);
+        stm_mean = NaN(1, nb_bins);
+        qq = quantile(stm_data, nb_bins - 1);
+        [~, ~, stm_bin] = histcounts(stm_data, [-inf, qq, inf]);
+        for nn = 1:nb_bins
+            inds5 = (stm_bin == nn);
+            stm_mean(nn) = mean(stm_data(inds5));
+        end
+                
+        % -> replace raw stimulus value by mean of bin
+        for rr = 1:nb_trials
+            raw_data_SRC(rr, 1) = stm_mean(stm_bin(rr));
+        end
+    end
+    
 
     [stim_lst, ~, stim_ic] = unique(raw_data_SRC(:, col_stim));
     stim_nb = length(stim_lst);

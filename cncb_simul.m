@@ -1,16 +1,23 @@
-% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.1
+% CNCB toolbox(Confidence Noise Confidence Boost) -- v0.2
 %
 % cncb_simul
-%   This function generates simulation of data of confidence rating
+%     This function generates simulation of data of confidence rating
 %   for a Type 1 discrimination task. 
-%   Its output data are both in a neutral format (stim, resp, conf) and
-%   in the format used by Maniscalco & Lau (2012).
+%     Stimuli are drawn either using a method of constant stimuli (default)
+%   or uniformly from a range of difficulty levels.
+%     Its output data are in a neutral format (stim, resp, conf). If 
+%   confidence is discrete, two other outputs are provided that bin
+%   confidence levels. In addition, if there are only 2 difficulty levels,
+%   there is one more output in the format used by Maniscalco & Lau (2012).
 %
 %
 % INPUT:
 %   'simul_params': structure of simulation parameters:
-%       'sens_intens': difficulty levels
-%       'nb_trials'  : number of confidence judgments to simulate
+%       'sens_intens'    : difficulty levels (constant stimuli)
+%       'sens_intens_min': minimum of range for stimuli (uniform sampling)
+%       'sens_intens_max': maximum of range for stimuli (uniform sampling)
+%       'sens_method'    : use of method of constant stimuli ('1' or '0')
+%       'nb_trials'      : number of confidence judgments to simulate
 %
 %   'model_params': model values parameters, as a structure
 %       'sens_noise' : sensory (Type 1) sdtev of noise (0 = perfectly sensitive)
@@ -55,6 +62,7 @@
 % 19-AUG-2021 - pascal mamassian
 % 19-OCT-2023 - pm: do not discretize continuous simulations
 % 10-MAR-2024 - pm: cleaned up
+% 05-APR-2025 - pm: added 'sensory_bins' function to 'cncb_group'
 
 
 function cncb_data = cncb_simul(simul_params, model_params)
@@ -63,8 +71,18 @@ function cncb_data = cncb_simul(simul_params, model_params)
 % *************************************************************************
 % -> STIMULI <-
 
-sens_intens = simul_params.sens_intens;   % range of stimuli
-nb_sens_intens = length(sens_intens);     % nb of stimuli
+% -> determine whether method is constant stimuli or continuous sampling
+if (~sum(contains(fieldnames(simul_params), 'method')))
+    % -> by default, we assume constant stimuli
+    simul_params.sens_method = 1;
+end
+if (simul_params.sens_method)
+    sens_intens = simul_params.sens_intens;   % range of stimuli
+    nb_sens_intens = length(sens_intens);     % nb of stimuli
+else
+    sens_intens_min = simul_params.sens_intens_min;
+    sens_intens_max = simul_params.sens_intens_max;
+end
 
 nb_trials = simul_params.nb_trials;     % number of trials
 
@@ -159,7 +177,7 @@ if (conf_continuous)
 end
 
 
-if (conf_continuous)
+if ((conf_continuous) || (~simul_params.sens_method))
     data_SRC = NaN;
     data_SRC_norm = NaN;
     nR_S1 = NaN;
@@ -203,10 +221,15 @@ conf_mag_nn = NaN(nb_trials, 1);   % confidence rating magnitude
 for tt = 1:nb_trials
 
     % -> choose randomly a stimulus in the set of possible stimuli
-    ind_intens = randi(nb_sens_intens);   % index of stimulus for interval 'intrv'
-    stims_nn(tt) = sens_intens(ind_intens);  % (noise-less) stimulus intensity
+    if (simul_params.sens_method)
+        ind_intens = randi(nb_sens_intens);   % index of stimulus for interval 'intrv'
+        stims_nn(tt) = sens_intens(ind_intens);  % (noise-less) stimulus intensity
+    else
+        stim_val = rand*(sens_intens_max - sens_intens_min) + sens_intens_min;
+        stims_nn(tt) = stim_val;  % (noise-less) stimulus intensity
+    end
 
-    % -> take independent noisy samples of the stimuli
+    % -> take independent noisy sample of the stimulus
     sens_smpl = stims_nn(tt) + randn * sens_noise;
 
     % -> sensory decision based on side of sensory criterion
@@ -247,6 +270,7 @@ for tt = 1:nb_trials
     conf_prob = normcdf(conf_mag);
         
     if (conf_continuous)
+
         % -> log-odds transform
         conf_llo = cncb_log_odds(conf_prob, llo_gamma, llo_p0);
         
@@ -256,23 +280,25 @@ for tt = 1:nb_trials
         conf_ind = discretize(conf_prob, conf_bnd_edges);
         conf_ind_nn(tt) = conf_ind;
 
-        % -> fill in the format stim-resp-conf
-        cnd_ind = (ind_intens - 1)*2*conf_levels_nb + resp1*conf_levels_nb + conf_ind;
-        data_SRC(cnd_ind, 4) = data_SRC(cnd_ind, 4) + 1;
-
-        % -> fill in the format from Maniscalco&Lau
-        if (nb_sens_intens == 2)
-            if (ind_intens == 1)
-                if (~resp1)
-                    nR_S1_R1(conf_ind) = nR_S1_R1(conf_ind) + 1;
+        if (simul_params.sens_method)
+            % -> fill in the format stim-resp-conf
+            cnd_ind = (ind_intens - 1)*2*conf_levels_nb + resp1*conf_levels_nb + conf_ind;
+            data_SRC(cnd_ind, 4) = data_SRC(cnd_ind, 4) + 1;
+    
+            % -> fill in the format from Maniscalco&Lau
+            if (nb_sens_intens == 2)
+                if (ind_intens == 1)
+                    if (~resp1)
+                        nR_S1_R1(conf_ind) = nR_S1_R1(conf_ind) + 1;
+                    else
+                        nR_S1_R2(conf_ind) = nR_S1_R2(conf_ind) + 1;
+                    end
                 else
-                    nR_S1_R2(conf_ind) = nR_S1_R2(conf_ind) + 1;
-                end
-            else
-                if (~resp1)
-                    nR_S2_R1(conf_ind) = nR_S2_R1(conf_ind) + 1;
-                else
-                    nR_S2_R2(conf_ind) = nR_S2_R2(conf_ind) + 1;
+                    if (~resp1)
+                        nR_S2_R1(conf_ind) = nR_S2_R1(conf_ind) + 1;
+                    else
+                        nR_S2_R2(conf_ind) = nR_S2_R2(conf_ind) + 1;
+                    end
                 end
             end
         end
@@ -283,7 +309,7 @@ end
 
 
 % -> compute conf_prob in last columns of 'data_SRC_norm'
-if (~conf_continuous)
+if ((~conf_continuous) && (simul_params.sens_method))
     for ss = 1:nb_sens_intens
         cond_i_min = (ss - 1)*2*conf_levels_nb + 1;
         cond_i_max = ss*2*conf_levels_nb;
@@ -312,7 +338,7 @@ if (conf_continuous)
     raw_data = [stims_nn, percs_nn, conf_mag_nn];
 else
     raw_data = [stims_nn, percs_nn, conf_ind_nn];
-    if (nb_sens_intens == 2)
+    if ((simul_params.sens_method) && (nb_sens_intens == 2))
         nR_S1 = [fliplr(nR_S1_R1), nR_S1_R2];
         nR_S2 = [fliplr(nR_S2_R1), nR_S2_R2];
     end
@@ -325,7 +351,7 @@ cncb_data = struct;
 cncb_data.raw_data = raw_data;
 cncb_data.data_SRC = data_SRC;
 cncb_data.data_SRC_prob = data_SRC_norm;
-if (nb_sens_intens == 2)
+if ((simul_params.sens_method) && (nb_sens_intens == 2))
     cncb_data.nR_S1 = nR_S1;
     cncb_data.nR_S2 = nR_S2;
 end
